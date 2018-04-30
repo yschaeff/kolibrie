@@ -22,38 +22,79 @@ L_UNK9 = Label(0x8d, 4, "Unknown field")
 L_UNK10 = Label(0x8e, 4, "Unknown field")
 L_UNK11 = Label(0x8f, 4, "Unknown field")
 
+L_UNK12 = Label(0x50, 1, "Unknown field")
+L_UNK13 = Label(0x51, 6, "Unknown field")
+
+L_UNK14 = Label(0x53, 1, "Unknown field")
+L_UNK15 = Label(0x54, 6, "Unknown field")
+
+L_UNK16 = Label(0x56, 1, "Unknown field")
+L_UNK17 = Label(0x57, 1, "Unknown field")
+
+L_UNK18 = Label(0x98, 4, "Unknown field")
+L_UNK19 = Label(0x99, 4, "Unknown field")
+L_UNK20 = Label(0x9a, 4, "Unknown field")
+L_UNK21 = Label(0x9b, 4, "Unknown field")
+L_UNK22 = Label(0x9c, 4, "Unknown field")
+L_UNK23 = Label(0x9d, 4, "Unknown field")
+L_UNK24 = Label(0x9e, 4, "Unknown field")
+L_UNK25 = Label(0x9f, 4, "Unknown field")
+L_DATA = Label(0xa0, 4, "Data length Bytes")
+
+L_END = Label(0x21, 0, "HEADER END")
+
 FIELDS = [ L_SAMPLE, L_MS, L_XUTM, L_YUTM, L_GPS1,
         L_GPS2, L_DEPTH, L_UNK3, L_UNK4,
         L_UNK5, L_UNK6, L_UNK7, L_UNK8,
-        L_UNK9, L_UNK10, L_UNK11]
+        L_UNK9, L_UNK10, L_UNK11,
+        L_UNK12, L_UNK13, L_UNK14, L_UNK15,
+        L_UNK16, L_UNK17, L_UNK18, L_UNK19,
+        L_UNK20, L_UNK21, L_UNK22, L_UNK23,
+        L_UNK24, L_UNK25, L_DATA, L_END]
 FIELD_MAP = {}
 for field in FIELDS:
     FIELD_MAP[field.opc] = field
 
+## every record seems to start with these 4 bytes
+HEADER = b'\xc0\xde\xab!'
 
 def parse_record(record):
-    HEADER = b'\xc0\xde\xab!'
-    p = 0
+    p = 0 #Pointer to next byte to read
+
     head = record[p:p+len(HEADER)]
     p += len(HEADER)
     assert(head == HEADER)
-    while True:
+
+    body = None
+    bodylen = 0
+    found_end = False
+
+    while not found_end:
         opc = record[p]
         p += 1
         field = FIELD_MAP.get(opc, None)
         if field:
-            data = record[p:p+field.len]
-            data = int.from_bytes(data, byteorder='big')
+            data = int.from_bytes(record[p:p+field.len], byteorder='big')
             p += field.len
-            print("FIELD '{}': {}".format(field.name, data))
+            print("FIELD '{}' ({:02X}): {}".format(field.name, field.opc, data))
+            if field == L_DATA:
+                bodylen = data
+            elif field == L_END:
+                found_end = True
         else:
-            data = record[p:]
-            #print("DATA ({} Bytes): {}".format(len(data), data))
-            print("DATA ({} Bytes)".format(len(data)))
+            ## we don't know how to decode this. image data? TODO
+            ## for now print length of remaining data
+            print("HELP WE DON'T KNOW WHAT TO DO")
+            print("DATA {} ({} Bytes)".format(opc, len(record[p:])))
             break
+    body = record[p:]
+    print("BODY LEN: {}".format(len(body)))
+    assert(len(body) == bodylen)
 
-IDXFILE = "Rec00009/B004.IDX"
-SONFILE = "Rec00009/B004.SON"
+IDXFILE = "Rec00009/B001.IDX"
+SONFILE = "Rec00009/B001.SON"
+#IDXFILE = "R00001/B000.idx"
+#SONFILE = "R00001/B000.SON"
 
 Ptr = namedtuple("Ptr", "id offset")
 pointers = []

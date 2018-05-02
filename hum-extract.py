@@ -22,7 +22,7 @@ L_UNK9 = Label(0x8d, 4, "Unknown field")
 L_UNK10 = Label(0x8e, 4, "Unknown field")
 L_UNK11 = Label(0x8f, 4, "Unknown field")
 
-L_UNK12 = Label(0x50, 1, "Unknown field")
+L_UNK12 = Label(0x50, 1, "Beam ID")
 L_UNK13 = Label(0x51, 6, "Unknown field")
 
 L_UNK14 = Label(0x53, 1, "Unknown field")
@@ -69,14 +69,16 @@ def parse_record(record):
     bodylen = 0
     found_end = False
 
+    print()
     while not found_end:
         opc = record[p]
         p += 1
         field = FIELD_MAP.get(opc, None)
         if field:
-            data = int.from_bytes(record[p:p+field.len], byteorder='big')
+            rawdata = record[p:p+field.len]
+            data = int.from_bytes(rawdata, byteorder='big')
             p += field.len
-            print("FIELD '{}' ({:02X}): {}".format(field.name, field.opc, data))
+            print("FIELD '{:<20}' ({:02X}): {} (0x{:X})".format(field.name, field.opc, data, data, field.len))
             if field == L_DATA:
                 bodylen = data
             elif field == L_END:
@@ -88,13 +90,15 @@ def parse_record(record):
             print("DATA {} ({} Bytes)".format(opc, len(record[p:])))
             break
     body = record[p:]
-    print("BODY LEN: {}".format(len(body)))
+    #print("BODY LEN: {}".format(len(body)))
     assert(len(body) == bodylen)
+    return body
 
-IDXFILE = "Rec00009/B001.IDX"
-SONFILE = "Rec00009/B001.SON"
-#IDXFILE = "R00001/B000.idx"
-#SONFILE = "R00001/B000.SON"
+
+IDXFILE = "Rec00009/B004.IDX"
+SONFILE = "Rec00009/B004.SON"
+#IDXFILE = "R00001/B001.idx"
+#SONFILE = "R00001/B001.SON"
 
 Ptr = namedtuple("Ptr", "id offset")
 pointers = []
@@ -119,6 +123,22 @@ with open(SONFILE, 'rb') as f_son:
         records.append(raw)
         s+=len(raw)
 
-for record in records:
-    print()
-    parse_record(record)
+bodies = [parse_record(record) for record in records]
+partitions = []
+last_len = 0
+for body in bodies:
+    l = len(body)
+    if l != last_len:
+        partitions.append([body])
+        last_len = l
+    else:
+        partitions[-1].append(body)
+
+from PIL import Image
+for part in partitions:
+    h = len(part)
+    w = len(part[0])
+    print(h, w)
+    data = b''.join(part)
+    #im = Image.frombytes("L", (w,h), data)
+    #im.show()

@@ -140,5 +140,5 @@ for part in partitions:
     w = len(part[0])
     print(h, w)
     data = b''.join(part)
-    #im = Image.frombytes("L", (w,h), data)
-    #im.show()
+    im = Image.frombytes("L", (w,h), data)
+    im.show()

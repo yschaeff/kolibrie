@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 from collections import namedtuple
 from math import tan, atan, exp, pi
+from time import gmtime, strftime
 import sys
 
 Label = namedtuple("Label", "opc len name")
@@ -105,6 +106,33 @@ def wsg2gps(easting, northing):
     lon = northing * 57.295779513082302 / 6378388.0
     return lat, lon
 
+def idx2pointers(idx_file):
+    Ptr = namedtuple("Ptr", "id offset")
+    pointers = []
+    with open(idx_file, 'rb') as f_idx:
+        while True:
+            r1 = f_idx.read(4)
+            r2 = f_idx.read(4)
+            if not r1 or not r2: break
+            idx = int.from_bytes(r1, byteorder='big')
+            offset = int.from_bytes(r2, byteorder='big')
+            pointers.append(Ptr(idx, offset))
+    return pointers
+
+def pointers2records(son_file, pointers):
+    records = []
+    s = 0
+    with open(son_file, 'rb') as f_son:
+        for i, ptr in enumerate(pointers):
+            f_son.seek(ptr.offset)
+            if i < len(pointers)-1:
+                raw = f_son.read(pointers[i+1].offset - ptr.offset)
+            else:
+                raw = f_son.read()
+            records.append(raw)
+            s+=len(raw)
+    return records
+
 parser = ArgumentParser()
 parser.add_argument("datfile", help="DAT file", action="store")
 parser.add_argument("-i", "--images", help="Render images", action="store_true")
@@ -120,72 +148,69 @@ dat_structure = [(1, None, I), (1, "water_type", I), (2, None, I), (4, "name", S
         (12, "filename", S), (2, None, I), (4, "records", I), (4, "recordlen", I),
         (4, "linesize", I), (5, None, I)]
 
+from struct import unpack, calcsize
+
 datfile = open(args.datfile, 'rb')
-datfields = {}
-for n, f, decode in dat_structure:
-    data = decode(datfile.read(n))
-    if decode == I:
-        print(n, f, "{:X}".format(data))
-    if f:
-        datfields[f] = data
+(version,) = unpack('B', datfile.read(1))
+datfile.seek(0)
+if version == 0xC1:
+    ## older version is 64 Bytes Big endian
+    DATSTRUCT = "> B B H 4I I I I 12s 5I"
+    Dat = namedtuple('Dat', 'version water_type a0 a1 a2 a3 a4 timestamp northing easting filename records record_period line_size f0 f1')
+elif version == 0xC3:
+    ## newer version is 96 Bytes Little endian
+    DATSTRUCT = "B B H 4I I I I 12s 13I"
+    Dat = namedtuple('Dat', 'version water_type a0 a1 a2 a3 a4 timestamp northing easting filename records record_period line_size f0 f1 f2 f3 f4 f5 f6 f7 f8 f9')
+else:
+    print("version:", version)
+    assert(False)
+
+chunk = datfile.read(calcsize(DATSTRUCT))
 datfile.close()
-print(datfields)
+dat = Dat._make(unpack(DATSTRUCT, chunk))
+print(dat)
 
-print(wsg2gps(datfields["easting"], datfields["northing"]))
+lat, lon = wsg2gps(dat.easting, dat.northing)
+ts = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime(dat.timestamp))
+basename, ext = dat.filename.decode('utf-8').split('.')
 
+print("water type:", ("fresh", "deep salt", "shallow salt")[dat.water_type])
+print("record date:", ts)
+print("GPS start:", lat, lon)
+print("base name:", basename)
+print("Number of records:", dat.records)
+print("recording period in ms:", dat.record_period)
+print("line size:", dat.line_size)
 
-IDXFILE = "Rec00009/B001.IDX"
-SONFILE = "Rec00009/B001.SON"
-#IDXFILE = "Rec00009/B002.IDX"
-#SONFILE = "Rec00009/B002.SON"
-#IDXFILE = "Rec00009/B003.IDX"
-#SONFILE = "Rec00009/B003.SON"
-#IDXFILE = "Rec00009/B004.IDX"
-#SONFILE = "Rec00009/B004.SON"
-#IDXFILE = "R00001/B001.idx"
-#SONFILE = "R00001/B001.SON"
+import glob
+idx_files = glob.glob(basename + "/*.IDX")
+if not idx_files: #hack
+    idx_files = glob.glob(basename + "/*.idx")
+son_files = [idx.split('.')[0]+".SON" for idx in idx_files]
+files = zip(idx_files, son_files)
 
-Ptr = namedtuple("Ptr", "id offset")
-pointers = []
-with open(IDXFILE, 'rb') as f_idx:
-    while True:
-        r1 = f_idx.read(4)
-        r2 = f_idx.read(4)
-        if not r1 or not r2: break
-        idx = int.from_bytes(r1, byteorder='big')
-        offset = int.from_bytes(r2, byteorder='big')
-        pointers.append(Ptr(idx, offset))
-
+pointers = [idx2pointers(idx_file) for idx_file in idx_files]
 ## From the index file we read all the pointers to the records
-records = []
-s = 0
-with open(SONFILE, 'rb') as f_son:
-    for i, ptr in enumerate(pointers):
-        f_son.seek(ptr.offset)
-        if i < len(pointers)-1:
-            raw = f_son.read(pointers[i+1].offset - ptr.offset)
+all_records = [pointers2records(son_file, ptrs) for son_file, ptrs in zip(son_files, pointers)]
+
+for records in all_records:
+    bodies = [parse_record(record, args.print_headers) for record in records]
+    partitions = []
+    last_len = 0
+    for body in bodies:
+        l = len(body)
+        if l != last_len:
+            partitions.append([body])
+            last_len = l
         else:
-            raw = f_son.read()
-        records.append(raw)
-        s+=len(raw)
+            partitions[-1].append(body)
 
-bodies = [parse_record(record, args.print_headers) for record in records]
-partitions = []
-last_len = 0
-for body in bodies:
-    l = len(body)
-    if l != last_len:
-        partitions.append([body])
-        last_len = l
-    else:
-        partitions[-1].append(body)
-
-if args.images:
     from PIL import Image
     for part in partitions:
         h = len(part)
         w = len(part[0])
         print(h, w)
-        data = b''.join(part)
-        im = Image.frombytes("L", (w,h), data)
-        im.show()
+        if args.images:
+            data = b''.join(part)
+            im = Image.frombytes("L", (w,h), data)
+            im.show()
